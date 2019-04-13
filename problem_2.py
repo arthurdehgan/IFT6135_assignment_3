@@ -5,12 +5,22 @@ import pandas as pd
 from torch import nn
 from torch.optim import Adam
 
+if torch.cuda.is_available():
+    print("Using the GPU")
+    device = torch.device("cuda")
+else:
+    print(
+        "WARNING: You are about to run on cpu, and this will likely run out \
+      of memory. \n You can try setting batch_size=1 to reduce memory usage"
+    )
+    device = torch.device("cpu")
+
 
 def loadmat(f):
     return torch.Tensor(pd.read_csv(f, sep=" ").values).view(-1, 1, 28, 28)
 
 
-def elbo(reconstruction, x, mu, logvar):
+def elbo(input_size, reconstruction, x, mu, logvar):
     """ELBO assuming entries of x are binary variables, with closed form DKL."""
     bce = torch.nn.functional.binary_cross_entropy(
         reconstruction, x.view(-1, input_size)
@@ -34,11 +44,11 @@ class VAE(nn.Module):
             nn.AvgPool2d(2, stride=2),
             nn.Conv2d(64, 256, 5),
             nn.ELU(),
-        )
-        self.mu = nn.Linear(256, 100)
-        self.sig = nn.Linear(256, 100)
+        ).to(device)
+        self.mu = nn.Linear(256, 100).to(device)
+        self.sig = nn.Linear(256, 100).to(device)
+        self.generated = nn.Linear(100, 256).to(device)
         self.decoder = nn.Sequential(
-            nn.Linear(100, 256),
             nn.ELU(),
             nn.Conv2d(256, 64, 5, padding=4),
             nn.ELU(),
@@ -49,31 +59,44 @@ class VAE(nn.Module):
             nn.Conv2d(32, 16, 3, padding=2),
             nn.ELU(),
             nn.Conv2d(16, 1, 3, padding=2),
-        )
+        ).to(device)
 
     def encode(self, x):
-        out = self.encoder(x)
-        print(out.shape)
+        out = self.encoder(x).squeeze()
         return self.mu(out), self.sig(out)
 
-    def decode(self, mu, sig):
-        seed = np.random.normal(0, 1, 100)
-        if self.training():
+    def reparam(self, mu, sig):
+        seed = torch.Tensor(np.random.normal(0, 1, 100))
+        if self.training:
             gen = seed * sig + mu
         else:
             gen = mu
-        return self.decoder(gen)
+        return gen
+
+    def decode(self, x):
+        return self.decoder(x)
 
     def forward(self, x):
-        return self.decode(self.encode(x))
+        mu, logvar = self.encode(x)
+        seed = self.reparam(mu, logvar)
+        gen = self.generated(seed)
+        gen = gen.view(-1, 256, 1, 1)
+        return self.decode(gen), mu, logvar
 
 
 if __name__ == "__main__":
     train = loadmat("binarized_mnist_train.amat")
     model = VAE()
-    model.forward(train[:10])
     optimizer = Adam(model.parameters(), lr=3e-4)
-    for _ in 20:
-        out = model.forward(dat)
-        model.backward(elbo(out))
-        optimizer.step()
+    criterion = nn.BCELoss()
+    batch_size = 128
+    EPOCHS = 20
+    for _ in EPOCHS:
+        for i in range(0, len(train), batch_size):
+            optimizer.zero_grad()
+            X = train[:batch_size].to(device)
+            out, mu, logvar = model.forward(X)
+            elbo(28, out, X, mu, logvar)
+            loss = criterion(out, X)
+            loss.backward()
+            optimizer.step()
