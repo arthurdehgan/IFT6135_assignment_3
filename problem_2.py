@@ -20,14 +20,7 @@ def loadmat(f):
     return torch.Tensor(pd.read_csv(f, sep=" ").values).view(-1, 1, 28, 28)
 
 
-def elbo(input_size, reconstruction, x, mu, logvar):
-    """ELBO assuming entries of x are binary variables, with closed form DKL."""
-    bce = torch.nn.functional.binary_cross_entropy(
-        reconstruction, x.view(-1, input_size)
-    )
-    DKL = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    # Normalise by same number of elements as in reconstruction
-    DKL /= x.view(-1, input_size).data.shape[0] * input_size
+def elbo(input_size, loss, x, mu, logvar):
     return bce + DKL
 
 
@@ -102,13 +95,17 @@ if __name__ == "__main__":
     criterion = nn.BCELoss()
     batch_size = 128
     EPOCHS = 20
-    for _ in range(EPOCHS):
+    for e in range(EPOCHS):
+        print(f"Epoch: {e}")
         for i in range(0, len(train), batch_size):
             optimizer.zero_grad()
             X = train[:batch_size].to(device)
             out, mu, logvar = model.forward(X)
             out = out.view(-1, 1, 28, 28)
-            # elbo(28, out, X, mu, logvar)
+            DKL = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+            DKL /= X.view(-1, 28).data.shape[0] * 28
             loss = criterion(out, X)
+            if i % 1024 == 0:
+                print(f"    Iteration: {i}, loss: {float(loss + DKL):.5f}", end="\r")
             loss.backward()
             optimizer.step()
