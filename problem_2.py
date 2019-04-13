@@ -20,10 +20,6 @@ def loadmat(f):
     return torch.Tensor(pd.read_csv(f, sep=" ").values).view(-1, 1, 28, 28)
 
 
-def elbo(input_size, loss, x, mu, logvar):
-    return bce + DKL
-
-
 class Interpolate(nn.Module):
     def __init__(self, scale_factor):
         super(Interpolate, self).__init__()
@@ -49,7 +45,7 @@ class VAE(nn.Module):
             nn.ELU(),
         ).to(device)
         self.mu = nn.Linear(256, 100).to(device)
-        self.sig = nn.Linear(256, 100).to(device)
+        self.logvar = nn.Linear(256, 100).to(device)
         self.generated = nn.Linear(100, 256).to(device)
         self.decoder = nn.Sequential(
             nn.ELU(),
@@ -62,17 +58,17 @@ class VAE(nn.Module):
             nn.Conv2d(32, 16, 3, padding=2),
             nn.ELU(),
             nn.Conv2d(16, 1, 3, padding=2),
-            nn.ReLU(),
+            nn.Sigmoid(),
         ).to(device)
 
     def encode(self, x):
         out = self.encoder(x).squeeze()
-        return self.mu(out), self.sig(out)
+        return self.mu(out), self.logvar(out)
 
-    def reparam(self, mu, sig):
+    def reparam(self, mu, logvar):
         seed = torch.Tensor(np.random.normal(0, 1, 100))
         if self.training:
-            gen = seed * sig + mu
+            gen = seed.mul(logvar.exp().pow(0.5)).add(mu)
         else:
             gen = mu
         return gen
@@ -102,10 +98,11 @@ if __name__ == "__main__":
             X = train[:batch_size].to(device)
             out, mu, logvar = model.forward(X)
             out = out.view(-1, 1, 28, 28)
-            DKL = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-            DKL /= X.view(-1, 28).data.shape[0] * 28
-            loss = criterion(out, X)
+            DKL = torch.sum(-1 - logvar + mu.pow(2) + logvar.exp()).mul(0.5)
+            reconstruction = criterion(out, X)
+            ELBO = reconstruction - DKL
             if i % 1024 == 0:
-                print(f"    Iteration: {i}, loss: {float(loss + DKL):.5f}", end="\r")
-            loss.backward()
+                # print(f"    Iteration: {i}, loss: {float(ELBO):.5f}", end="\r")
+                print(f"    Iteration: {i}, loss: {float(ELBO):.5f}")
+            ELBO.backward()
             optimizer.step()
