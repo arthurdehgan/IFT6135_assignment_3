@@ -91,11 +91,12 @@ if __name__ == "__main__":
     criterion = nn.BCELoss()
     batch_size = 128
     EPOCHS = 20
-    for _ in EPOCHS:
+    for _ in range(EPOCHS):
         for i in range(0, len(train), batch_size):
             optimizer.zero_grad()
             X = train[:batch_size].to(device)
             out, mu, logvar = model.forward(X)
+            out = out.view(batch_size, 1, 28, 28)
             elbo(28, out, X, mu, logvar)
             loss = criterion(out, X)
             loss.backward()
