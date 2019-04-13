@@ -97,12 +97,11 @@ if __name__ == "__main__":
             X = train[:batch_size].to(device)
             out, mu, logvar = model.forward(X)
             out = out.view(-1, 1, 28, 28)
-            DKL = (
-                torch.sum(-1 - logvar + mu.pow(2) + logvar.exp()).mul(0.5)
-                / logvar.size()[0]
+            DKL = torch.sum(-1 - logvar + mu.pow(2) + logvar.exp()) / (
+                logvar.size()[0] * 784 * 2
             )
             reconstruction = criterion(out, X)
-            ELBO = reconstruction - DKL
+            ELBO = reconstruction + DKL
             if i % 1024 == 0:
                 # print(f"    Iteration: {i}, loss: {float(ELBO):.5f}", end="\r")
                 print(f"    Iteration: {i}, loss: {float(ELBO):.5f}")
