@@ -1,10 +1,13 @@
 #!/usr/bin/env python
 import torch
 import numpy as np
-import torchvision.datasets
-import torchvision.transforms as transforms
+import pandas as pd
 from torch import nn
 from torch.optim import Adam
+
+
+def loadmat(f):
+    return torch.Tensor(pd.read_csv(f, sep=" ").values).view(-1, 1, 28, 28)
 
 
 def elbo(reconstruction, x, mu, logvar):
@@ -21,6 +24,7 @@ def elbo(reconstruction, x, mu, logvar):
 class VAE(nn.Module):
     def __init__(self):
         super(VAE, self).__init__()
+
         self.encoder = nn.Sequential(
             nn.Conv2d(1, 32, 3),
             nn.ELU(),
@@ -49,6 +53,7 @@ class VAE(nn.Module):
 
     def encode(self, x):
         out = self.encoder(x)
+        print(out.shape)
         return self.mu(out), self.sig(out)
 
     def decode(self, mu, sig):
@@ -64,8 +69,9 @@ class VAE(nn.Module):
 
 
 if __name__ == "__main__":
+    train = loadmat("binarized_mnist_train.amat")
     model = VAE()
-    model.forward(torch.Tensor(55))
+    model.forward(train[:10])
     optimizer = Adam(model.parameters(), lr=3e-4)
     for _ in 20:
         out = model.forward(dat)
