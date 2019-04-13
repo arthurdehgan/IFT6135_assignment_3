@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-import torch
 import numpy as np
 import pandas as pd
+import torch
 from torch import nn
 from torch.optim import Adam
 
@@ -10,8 +10,8 @@ if torch.cuda.is_available():
     device = torch.device("cuda")
 else:
     print(
-        "WARNING: You are about to run on cpu, and this will likely run out \
-      of memory. \n You can try setting batch_size=1 to reduce memory usage"
+        "WARNING: You are about to run on cpu, and this will likely run out of memory."
+        + " You can try setting batch_size=1 to reduce memory usage"
     )
     device = torch.device("cpu")
 
@@ -29,6 +29,16 @@ def elbo(input_size, reconstruction, x, mu, logvar):
     # Normalise by same number of elements as in reconstruction
     DKL /= x.view(-1, input_size).data.shape[0] * input_size
     return bce + DKL
+
+
+class Interpolate(nn.Module):
+    def __init__(self, scale_factor):
+        super(Interpolate, self).__init__()
+        self.interp = nn.functional.interpolate
+        self.sf = scale_factor
+
+    def forward(self, x):
+        return self.interp(x, scale_factor=self.sf)
 
 
 class VAE(nn.Module):
@@ -52,10 +62,9 @@ class VAE(nn.Module):
             nn.ELU(),
             nn.Conv2d(256, 64, 5, padding=4),
             nn.ELU(),
-            nn.UpsamplingBilinear2d(scale_factor=2),
             nn.Conv2d(64, 32, 3, padding=2),
             nn.ELU(),
-            nn.UpsamplingBilinear2d(scale_factor=2),
+            Interpolate(scale_factor=2),
             nn.Conv2d(32, 16, 3, padding=2),
             nn.ELU(),
             nn.Conv2d(16, 1, 3, padding=2),
@@ -96,8 +105,9 @@ if __name__ == "__main__":
             optimizer.zero_grad()
             X = train[:batch_size].to(device)
             out, mu, logvar = model.forward(X)
+            print(out.shape)
             out = out.view(batch_size, 1, 28, 28)
-            elbo(28, out, X, mu, logvar)
+            # elbo(28, out, X, mu, logvar)
             loss = criterion(out, X)
             loss.backward()
             optimizer.step()
