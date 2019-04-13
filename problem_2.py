@@ -11,7 +11,7 @@ if torch.cuda.is_available():
 else:
     print(
         "WARNING: You are about to run on cpu, and this will likely run out of memory."
-        + " You can try setting batch_size=1 to reduce memory usage"
+        + "\nYou can try setting batch_size=1 to reduce memory usage"
     )
     device = torch.device("cpu")
 
@@ -62,12 +62,14 @@ class VAE(nn.Module):
             nn.ELU(),
             nn.Conv2d(256, 64, 5, padding=4),
             nn.ELU(),
+            Interpolate(scale_factor=2),
             nn.Conv2d(64, 32, 3, padding=2),
             nn.ELU(),
             Interpolate(scale_factor=2),
             nn.Conv2d(32, 16, 3, padding=2),
             nn.ELU(),
             nn.Conv2d(16, 1, 3, padding=2),
+            nn.ReLU(),
         ).to(device)
 
     def encode(self, x):
@@ -105,8 +107,7 @@ if __name__ == "__main__":
             optimizer.zero_grad()
             X = train[:batch_size].to(device)
             out, mu, logvar = model.forward(X)
-            print(out.shape)
-            out = out.view(batch_size, 1, 28, 28)
+            out = out.view(-1, 1, 28, 28)
             # elbo(28, out, X, mu, logvar)
             loss = criterion(out, X)
             loss.backward()
