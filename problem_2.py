@@ -66,7 +66,7 @@ class VAE(nn.Module):
         return self.mu(out), self.logvar(out)
 
     def reparam(self, mu, logvar):
-        seed = torch.Tensor(np.random.normal(0, 1, 100))
+        seed = torch.Tensor(np.random.normal(0, 1, 100)).to(device)
         if self.training:
             return seed.mul(logvar.exp().pow(0.5)).add(mu)
         else:
@@ -83,13 +83,22 @@ class VAE(nn.Module):
         return self.decode(gen), mu, logvar
 
 
+def elbo(X, out, mu, logvar):
+    DKL = torch.sum(-1 - logvar + mu.pow(2) + logvar.exp())
+    DKL /= logvar.size()[0] * 784 * 2
+    reconstruction = criterion(out, X)
+    return reconstruction + DKL
+
+
 if __name__ == "__main__":
     train = loadmat("binarized_mnist_train.amat")
+    valid = loadmat("binarized_mnist_valid.amat")
     model = VAE()
     optimizer = Adam(model.parameters(), lr=3e-4)
     criterion = nn.BCELoss()
-    batch_size = 4096
+    batch_size = 512
     EPOCHS = 20
+    div = 9
     for e in range(EPOCHS):
         print(f"Epoch: {e}")
         for i in range(0, len(train), batch_size):
@@ -97,13 +106,21 @@ if __name__ == "__main__":
             X = train[:batch_size].to(device)
             out, mu, logvar = model.forward(X)
             out = out.view(-1, 1, 28, 28)
-            DKL = torch.sum(-1 - logvar + mu.pow(2) + logvar.exp()) / (
-                logvar.size()[0] * 784 * 2
-            )
-            reconstruction = criterion(out, X)
-            ELBO = reconstruction + DKL
+            ELBO = elbo(X, out, mu, logvar)
             if i % 1024 == 0:
-                # print(f"    Iteration: {i}, loss: {float(ELBO):.5f}", end="\r")
-                print(f"    Iteration: {i}, loss: {float(ELBO):.5f}")
+                vELBO = []
+                for k in range(div):
+                    N = len(valid)
+                    svalid = valid[int(k * N / div) : int((k + 1) * N / div)].to(device)
+                    vout, vmu, vlogvar = model.forward(svalid)
+                    vout = vout.view(-1, 1, 28, 28)
+                    vELBO.append(float(elbo(svalid, vout, vmu, vlogvar)))
+                vELBO = np.mean(vELBO)
+                print(
+                    f"    Iteration: {i}, train_loss: {float(ELBO):.5f}, valid_loss: {float(vELBO):.5f}",
+                    end="\r",
+                )
+                # print(f"    Iteration: {i}, loss: {float(ELBO):.5f}")
             ELBO.backward()
             optimizer.step()
+        print("\n")
