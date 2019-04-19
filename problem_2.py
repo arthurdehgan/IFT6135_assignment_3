@@ -19,7 +19,7 @@ else:
 
 
 def create_grid(images, grid_size=6):
-    index = np.random.choice(np.arange(len(images)), grid_size ** 2)
+    index = np.random.choice(np.arange(len(images)), grid_size ** 2, replace=False)
     grid = np.array([]).reshape(0, images.shape[-1] * grid_size)
     for i in range(grid_size):
         line = np.concatenate(
