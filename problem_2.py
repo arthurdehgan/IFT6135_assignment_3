@@ -97,21 +97,28 @@ class VAE(nn.Module):
         return self.decode(gen), mu, logvar
 
 
-def dkl(out, mu, logvar):
-    DKL = torch.sum(-1 - logvar + mu.pow(2) + logvar.exp())
-    DKL /= logvar.size()[0] * 784 * 2
+def dkl(mu, logvar):
+    DKL = 0.5 * torch.sum(-1 - logvar + mu.pow(2) + logvar.exp())
+    DKL /= len(logvar) * 784
     return DKL
 
 
+def bce(out, X):
+    BCE = nn.functional.binary_cross_entropy(
+        out.view(-1, 784), X.view(-1, 784), size_average=False
+    )
+    return BCE
+
+
 def elbo(X, out, mu, logvar):
-    DKL = dkl(out, mu, logvar)
-    reconstruction = criterion(out, X)
-    return reconstruction + DKL
+    DKL = dkl(mu, logvar)
+    BCE = nn.BCELoss(reduction="sum")(out, X)
+    return BCE + DKL
 
 
 if __name__ == "__main__":
-    batch_size = 256
-    EPOCHS = 20
+    batch_size = 16
+    EPOCHS = 40
     train = loadmat("binarized_mnist_train.amat")
     train_dataset = utils.TensorDataset(train)
     trainloader = utils.DataLoader(
@@ -132,14 +139,12 @@ if __name__ == "__main__":
 
     model = VAE()
     optimizer = Adam(model.parameters(), lr=3e-4)
-    criterion = nn.BCELoss()
     for e in range(EPOCHS):
         ELBOs = []
         for X in trainloader:
             optimizer.zero_grad()
             X = X[0].to(device)
             out, mu, logvar = model.forward(X)
-            out = out.view(-1, 1, 28, 28)
             ELBO = elbo(X, out, mu, logvar)
             ELBO.backward()
             optimizer.step()
@@ -149,11 +154,10 @@ if __name__ == "__main__":
         for svalid in validloader:
             svalid = svalid[0].to(device)
             vout, vmu, vlogvar = model.forward(svalid)
-            vout = vout.view(-1, 1, 28, 28)
             vELBOs.append(float(elbo(svalid, vout, vmu, vlogvar)))
 
         print(
-            f"Epoch {e}: train_loss: {np.mean(ELBOs):.5f}, valid_loss: {np.mean(vELBOs):.5f}"
+            f"Epoch {e}: train_loss: {-np.mean(ELBOs):.5f}, valid_loss: {-np.mean(vELBOs):.5f}"
         )
 
     generated = np.array([]).reshape(0, 28, 28)
