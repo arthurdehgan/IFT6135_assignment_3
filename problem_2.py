@@ -116,9 +116,19 @@ def elbo(X, out, mu, logvar):
     return BCE + DKL
 
 
+# def pdf(X, mu, logvar):
+#     sigma = logvar.exp()
+#     return
+
+
+# def loss_function(model, array, other_array):
+# losses = [log (1/K) sum(p1*p2/q) for k in pdf()]
+# return losses
+
+
 if __name__ == "__main__":
-    batch_size = 16
-    EPOCHS = 40
+    batch_size = 1
+    EPOCHS = 30
     train = loadmat("binarized_mnist_train.amat")
     train_dataset = utils.TensorDataset(train)
     trainloader = utils.DataLoader(
