@@ -4,6 +4,8 @@ import pandas as pd
 import torch
 from torch import nn
 from torch.optim import Adam
+import torch.utils.data as utils
+import matplotlib.pyplot as plt
 
 if torch.cuda.is_available():
     print("Using the GPU")
@@ -14,6 +16,18 @@ else:
         + "\nYou can try setting batch_size=1 to reduce memory usage"
     )
     device = torch.device("cpu")
+
+
+def create_grid(images, grid_size=6):
+    index = np.random.choice(np.arange(len(images)), grid_size ** 2)
+    grid = np.array([]).reshape(0, images.shape[-1] * grid_size)
+    for i in range(grid_size):
+        line = np.concatenate(
+            [images[index[j]] for j in range(i * grid_size, (i + 1) * grid_size)],
+            axis=1,
+        )
+        grid = np.concatenate((grid, line), axis=0)
+    return grid
 
 
 def loadmat(f):
@@ -83,44 +97,68 @@ class VAE(nn.Module):
         return self.decode(gen), mu, logvar
 
 
-def elbo(X, out, mu, logvar):
+def dkl(out, mu, logvar):
     DKL = torch.sum(-1 - logvar + mu.pow(2) + logvar.exp())
     DKL /= logvar.size()[0] * 784 * 2
+    return DKL
+
+
+def elbo(X, out, mu, logvar):
+    DKL = dkl(out, mu, logvar)
     reconstruction = criterion(out, X)
     return reconstruction + DKL
 
 
 if __name__ == "__main__":
+    batch_size = 256
+    EPOCHS = 20
     train = loadmat("binarized_mnist_train.amat")
+    train_dataset = utils.TensorDataset(train)
+    trainloader = utils.DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=2
+    )
+
     valid = loadmat("binarized_mnist_valid.amat")
+    valid_dataset = utils.TensorDataset(valid)
+    validloader = utils.DataLoader(
+        valid_dataset, batch_size=batch_size, shuffle=True, num_workers=2
+    )
+
+    test = loadmat("binarized_mnist_test.amat")
+    test_dataset = utils.TensorDataset(test)
+    testloader = utils.DataLoader(
+        test_dataset, batch_size=batch_size, shuffle=True, num_workers=2
+    )
+
     model = VAE()
     optimizer = Adam(model.parameters(), lr=3e-4)
     criterion = nn.BCELoss()
-    batch_size = 512
-    EPOCHS = 20
-    div = 9
     for e in range(EPOCHS):
-        print(f"Epoch: {e}")
-        for i in range(0, len(train), batch_size):
+        ELBOs = []
+        for X in trainloader:
             optimizer.zero_grad()
-            X = train[:batch_size].to(device)
+            X = X[0].to(device)
             out, mu, logvar = model.forward(X)
             out = out.view(-1, 1, 28, 28)
             ELBO = elbo(X, out, mu, logvar)
-            if i % 1024 == 0:
-                vELBO = []
-                for k in range(div):
-                    N = len(valid)
-                    svalid = valid[int(k * N / div) : int((k + 1) * N / div)].to(device)
-                    vout, vmu, vlogvar = model.forward(svalid)
-                    vout = vout.view(-1, 1, 28, 28)
-                    vELBO.append(float(elbo(svalid, vout, vmu, vlogvar)))
-                vELBO = np.mean(vELBO)
-                print(
-                    f"    Iteration: {i}, train_loss: {float(ELBO):.5f}, valid_loss: {float(vELBO):.5f}",
-                    end="\r",
-                )
-                # print(f"    Iteration: {i}, loss: {float(ELBO):.5f}")
             ELBO.backward()
             optimizer.step()
-        print("\n")
+            ELBOs.append(float(ELBO))
+
+        vELBOs = []
+        for svalid in validloader:
+            svalid = svalid[0].to(device)
+            vout, vmu, vlogvar = model.forward(svalid)
+            vout = vout.view(-1, 1, 28, 28)
+            vELBOs.append(float(elbo(svalid, vout, vmu, vlogvar)))
+
+        print(
+            f"Epoch {e}: train_loss: {np.mean(ELBOs):.5f}, valid_loss: {np.mean(vELBOs):.5f}"
+        )
+
+    for batch in testloader:
+        out, mu, logvar = model.forward(batch[0].to(device))
+        generated = np.array(out.view(-1, 28, 28).detach().cpu())
+
+    plt.matshow(create_grid(generated))
+    plt.show()
