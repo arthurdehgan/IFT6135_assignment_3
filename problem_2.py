@@ -156,9 +156,12 @@ if __name__ == "__main__":
             f"Epoch {e}: train_loss: {np.mean(ELBOs):.5f}, valid_loss: {np.mean(vELBOs):.5f}"
         )
 
+    generated = np.array([]).reshape(0, 28, 28)
     for batch in testloader:
         out, mu, logvar = model.forward(batch[0].to(device))
-        generated = np.array(out.view(-1, 28, 28).detach().cpu())
+        generated = np.concatenate(
+            (generated, out.view(-1, 28, 28).detach().cpu().numpy()), axis=0
+        )
 
     plt.matshow(create_grid(generated))
     plt.show()
