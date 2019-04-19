@@ -99,7 +99,7 @@ class VAE(nn.Module):
 
 def dkl(mu, logvar):
     DKL = 0.5 * torch.sum(-1 - logvar + mu.pow(2) + logvar.exp())
-    DKL /= len(logvar) * 784
+    DKL /= len(mu) * 784
     return DKL
 
 
@@ -107,12 +107,14 @@ def bce(out, X):
     BCE = nn.functional.binary_cross_entropy(
         out.view(-1, 784), X.view(-1, 784), size_average=False
     )
+    # return -BCE
     return BCE
 
 
 def elbo(X, out, mu, logvar):
     DKL = dkl(mu, logvar)
     BCE = nn.BCELoss(reduction="sum")(out, X)
+    # return BCE - DKL
     return BCE + DKL
 
 
@@ -127,8 +129,8 @@ def elbo(X, out, mu, logvar):
 
 
 if __name__ == "__main__":
-    batch_size = 1
-    EPOCHS = 30
+    batch_size = 4
+    EPOCHS = 20
     train = loadmat("binarized_mnist_train.amat")
     train_dataset = utils.TensorDataset(train)
     trainloader = utils.DataLoader(
@@ -155,6 +157,7 @@ if __name__ == "__main__":
             optimizer.zero_grad()
             X = X[0].to(device)
             out, mu, logvar = model.forward(X)
+            # ELBO = -elbo(X, out, mu, logvar)
             ELBO = elbo(X, out, mu, logvar)
             ELBO.backward()
             optimizer.step()
