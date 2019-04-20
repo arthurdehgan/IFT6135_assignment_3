@@ -339,8 +339,8 @@ def log_likelihood(model, X, Z):
         the data, of shape (batch_size, width*height)
     Z: torch.Tensor
         a 3D tensor of shape (batch_size, n_samples, latent_size) with:
-            n_samples: the number of importance samples
-            latent_size : the size of the latent space of the autoencoder
+            n_samples: the number of importance samples (200-300)
+            latent_size : the size of the latent space of the autoencoder (100)
 
     Returns
     -------
@@ -373,6 +373,7 @@ def log_likelihood(model, X, Z):
 
 
 if __name__ == "__main__":
+    mode = "elbo"
     batch_size = 4
     EPOCHS = 20
     train = loadmat("binarized_mnist_train.amat")
@@ -396,27 +397,35 @@ if __name__ == "__main__":
     model = VAE()
     optimizer = Adam(model.parameters(), lr=3e-4)
     for e in range(EPOCHS):
-        ELBOs = []
+        losses = []
         model.train()
         for X in trainloader:
             optimizer.zero_grad()
             X = X[0].to(device)
-            out, mu, logvar = model.forward(X)
-            # ELBO = -elbo(X, out, mu, logvar)
-            ELBO = elbo(X, out, mu, logvar)
-            ELBO.backward()
+            if mode == "elbo":
+                out, mu, logvar = model.forward(X)
+                loss = elbo(X, out, mu, logvar)
+            else:
+                Z = torch.Tensor()  # TODO
+                loss = log_likelihood(model, X, Z)
+            loss.backward()
             optimizer.step()
-            ELBOs.append(float(ELBO))
+            losses.append(float(loss))
 
-        vELBOs = []
+        vlosses = []
         model.eval()
         for svalid in validloader:
             svalid = svalid[0].to(device)
-            vout, vmu, vlogvar = model.forward(svalid)
-            vELBOs.append(float(elbo(svalid, vout, vmu, vlogvar)))
+            if mode == "elbo":
+                vout, vmu, vlogvar = model.forward(svalid)
+                vloss = float(elbo(svalid, vout, vmu, vlogvar))
+            else:
+                Z = torch.Tensor()  # TODO
+                vloss = float(log_likelihood(model, X, Z).mean())
+            vlosses.append(vloss)
 
         print(
-            f"Epoch {e}: train_loss: {-np.mean(ELBOs):.5f}, valid_loss: {-np.mean(vELBOs):.5f}"
+            f"Epoch {e}: train_loss: {-np.mean(losses):.5f}, valid_loss: {-np.mean(vlosses):.5f}"
         )
 
     generated = np.array([]).reshape(0, 28, 28)
@@ -426,5 +435,5 @@ if __name__ == "__main__":
             (generated, out.view(-1, 28, 28).detach().cpu().numpy()), axis=0
         )
 
-    plt.matshow(-create_grid(generated), cmap=plt.cm.gray_r)
+    plt.matshow(create_grid(-generated), cmap=plt.cm.gray_r)
     plt.savefig("generated_grid.png")
