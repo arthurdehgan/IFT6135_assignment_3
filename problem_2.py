@@ -246,7 +246,7 @@ def dkl(mu, logvar):
         the KL divergence
     """
     DKL = 0.5 * torch.sum(-1 - logvar + mu.pow(2) + logvar.exp())
-    DKL /= len(mu) * 784
+    # DKL /= len(mu) * 784
     return DKL
 
 
@@ -267,14 +267,14 @@ def elbo(X, out, mu, logvar):
 
     Returns
     -------
-    ELBO: torch.Tensor
+    n_ELBO: torch.Tensor
         the negative ELBO (which is positive, because we will minimize this value instead of
         maximizing the ELBO)
     """
     DKL = dkl(mu, logvar)
     BCE = nn.BCELoss(reduction="sum")(out, X)
     # return BCE - DKL
-    return BCE + DKL
+    return (BCE + DKL) / X.shape[0]
 
 
 def probability_density_function(z, mu, logvar):
@@ -379,9 +379,11 @@ if __name__ == "__main__":
 
     model = VAE()
     optimizer = Adam(model.parameters(), lr=3e-4)
+    N = len(train)
     for e in range(EPOCHS):
         losses, ELBOs = [], []
         model.train()
+        progress = 0
         for X in trainloader:
             optimizer.zero_grad()
             X = X[0].to(device)
@@ -401,7 +403,11 @@ if __name__ == "__main__":
             else:
                 loss.backward()
 
-            print(f"nll: {-float(loss):.4f}, ELBO: {-float(ELBO):.4f}", end="\r")
+            progress += len(X)
+            print(
+                f"{progress:6d}/{N}  ||  nll: {-float(loss):.4f}  ||  ELBO: {-float(ELBO):.4f}",
+                end="\r",
+            )
             optimizer.step()
             losses.append(float(loss))
 
