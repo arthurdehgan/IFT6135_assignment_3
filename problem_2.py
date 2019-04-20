@@ -59,28 +59,6 @@ def loadmat(f):
     return torch.Tensor(pd.read_csv(f, sep=" ").values).view(-1, 1, 28, 28)
 
 
-def normal_sample(mu, logvar, size):
-    """
-    Generates a tensor according to the using the normal law
-
-    Parameters
-    ----------
-    mu: torch.Tensor
-        the means of each sample of the final tensor
-    logvar: torch.Tensor:
-        the log of the variance of each sample of the final tensor
-    size: int
-        the size of the tensor to generate
-
-    Returns
-    -------
-    torch.Tensor
-        the generated samples
-    """
-    seed = torch.Tensor(np.random.normal(0, 1, size))
-    return seed.mul((0.5 * logvar).exp()).add(mu)
-
-
 class Interpolate(nn.Module):
     """
     Torch module to perform 2D upscaling via interpolation.
@@ -204,7 +182,8 @@ class VAE(nn.Module):
             distribution during testing
         """
         if self.training:
-            normal_sample(mu, logvar, self.latent_size).to(device)
+            seed = torch.Tensor(np.random.normal(0, 1, self.latent_size)).to(device)
+            return seed.mul((0.5 * logvar).exp()).add(mu)
         else:
             return mu
 
@@ -224,7 +203,7 @@ class VAE(nn.Module):
         """
         z = self.sample(z)
         z = z.view(-1, 256, 1, 1)
-        return self.decoder(out)
+        return self.decoder(z)
 
     def forward(self, x):
         """
@@ -377,8 +356,8 @@ def log_likelihood(model, X, Z):
 
 
 if __name__ == "__main__":
-    mode = "elbo"
-    batch_size = 4
+    mode = "elb"
+    batch_size = 256
     EPOCHS = 20
     train = loadmat("binarized_mnist_train.amat")
     train_dataset = utils.TensorDataset(train)
@@ -410,10 +389,12 @@ if __name__ == "__main__":
             if mode == "elbo":
                 loss = elbo(X, out, mu, logvar)
             else:
-                for _ in range(K)
-                    normal_sample(mu, logvar, )
-                Z = torch.Tensor()  # TODO
-                loss = log_likelihood(model, X, Z)
+                Z = torch.empty(batch_size, 200, 100)  # TODO
+                mu, logvar = model.encode(X)
+                for i in range(batch_size):
+                    Zi = torch.empty(200, 100).normal_().to(device)
+                    Z[i, :, :] = Zi * (.5 * logvar[i]).exp_() + mu[i]
+                loss = float(log_likelihood(model, X, Z).mean())
             loss.backward()
             optimizer.step()
             losses.append(float(loss))
@@ -429,8 +410,7 @@ if __name__ == "__main__":
                 Z = torch.empty(batch_size, 200, 100)  # TODO
                 mu, logvar = model.encode(X)
                 for i in range(batch_size):
-                    Zi = torch.empty(200, 100).normal_()
-                    Z[i,:,:] = Zi * (.5* logvar[i]).exp_() + mu[i]
+                    Zi = torch.empty(200, 100).normal_().to(device[i, :, :] = Zi * (.5 * logvar[i]).exp_() + mu[i]
                 vloss = float(log_likelihood(model, X, Z).mean())
             vlosses.append(vloss)
 
