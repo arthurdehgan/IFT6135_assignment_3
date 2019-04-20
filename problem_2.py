@@ -59,6 +59,28 @@ def loadmat(f):
     return torch.Tensor(pd.read_csv(f, sep=" ").values).view(-1, 1, 28, 28)
 
 
+def normal_sample(mu, logvar, size):
+    """
+    Generates a tensor according to the using the normal law
+
+    Parameters
+    ----------
+    mu: torch.Tensor
+        the means of each sample of the final tensor
+    logvar: torch.Tensor:
+        the log of the variance of each sample of the final tensor
+    size: int
+        the size of the tensor to generate
+
+    Returns
+    -------
+    torch.Tensor
+        the generated samples
+    """
+    seed = torch.Tensor(np.random.normal(0, 1, size))
+    return seed.mul((0.5 * logvar).exp()).add(mu)
+
+
 class Interpolate(nn.Module):
     """
     Torch module to perform 2D upscaling via interpolation.
@@ -181,13 +203,12 @@ class VAE(nn.Module):
         A generated vector according to the unit normal law during training, the mean vector of the
             distribution during testing
         """
-        seed = torch.Tensor(np.random.normal(0, 1, self.latent_size)).to(device)
         if self.training:
-            return seed.mul(logvar.exp().pow(0.5)).add(mu)
+            normal_sample(mu, logvar, self.latent_size).to(device)
         else:
             return mu
 
-    def decode(self, x):
+    def decode(self, z):
         """
         decodes the generated vector back into images.
 
@@ -201,7 +222,9 @@ class VAE(nn.Module):
         gen: torch.Tensor
             a tensor of reconstructed images of shape (batch_size, 1, width, height)
         """
-        return self.decoder(x)
+        z = self.sample(z)
+        z = z.view(-1, 256, 1, 1)
+        return self.decoder(out)
 
     def forward(self, x):
         """
@@ -222,28 +245,9 @@ class VAE(nn.Module):
             the log of the variance of the learned distribution.
         """
         mu, logvar = self.encode(x)
-        seed = self.reparam(mu, logvar)
-        gen = self.sample(seed)
-        gen = gen.view(-1, 256, 1, 1)
-        return self.decode(gen), mu, logvar
-
-    def generate(self, z):
-        """
-        Genrates images from the latent space.
-
-        Parameters
-        ----------
-        z: torch.Tensor
-            A vector(batch_size, latent_size)
-
-        Returns
-        -------
-        torch.Tensor
-            A generated tensor of images
-        """
-        x = self.sample(z)
-        x = x.view(-1, 256, 1, 1)
-        return self.decode(x)
+        z = self.reparam(mu, logvar)
+        gen = self.decode(z)
+        return gen, mu, logvar
 
 
 def dkl(mu, logvar):
@@ -354,7 +358,7 @@ def log_likelihood(model, X, Z):
     mu, logvar = model.encode(X.view(batch_size, 1, 28, 28))
 
     for i in range(n_samples):
-        out = model.generate(Z[:, i, :])
+        out = model.decode(Z[:, i, :])
 
         # reconstruction error using BCE
         log_p_xz[:, i] = -nn.functional.binary_cross_entropy(
@@ -402,10 +406,12 @@ if __name__ == "__main__":
         for X in trainloader:
             optimizer.zero_grad()
             X = X[0].to(device)
+            out, mu, logvar = model.forward(X)
             if mode == "elbo":
-                out, mu, logvar = model.forward(X)
                 loss = elbo(X, out, mu, logvar)
             else:
+                for _ in range(K)
+                    normal_sample(mu, logvar, )
                 Z = torch.Tensor()  # TODO
                 loss = log_likelihood(model, X, Z)
             loss.backward()
@@ -416,8 +422,8 @@ if __name__ == "__main__":
         model.eval()
         for svalid in validloader:
             svalid = svalid[0].to(device)
+            vout, vmu, vlogvar = model.forward(svalid)
             if mode == "elbo":
-                vout, vmu, vlogvar = model.forward(svalid)
                 vloss = float(elbo(svalid, vout, vmu, vlogvar))
             else:
                 Z = torch.Tensor()  # TODO
