@@ -426,7 +426,11 @@ if __name__ == "__main__":
             if mode == "elbo":
                 vloss = float(elbo(svalid, vout, vmu, vlogvar))
             else:
-                Z = torch.Tensor()  # TODO
+                Z = torch.empty(batch_size, 200, 100)  # TODO
+                mu, logvar = model.encode(X)
+                for i in range(batch_size):
+                    Zi = torch.empty(200, 100).normal_()
+                    Z[i,:,:] = Zi * (.5* logvar[i]).exp_() + mu[i]
                 vloss = float(log_likelihood(model, X, Z).mean())
             vlosses.append(vloss)
 
