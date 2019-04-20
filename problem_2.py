@@ -76,6 +76,8 @@ class VAE(nn.Module):
         ).to(device)
 
     def encode(self, x):
+        """ x.shape = [batch_size, 1, 28, 28]
+        """
         out = self.encoder(x).squeeze()
         return self.mu(out), self.logvar(out)
 
@@ -95,6 +97,15 @@ class VAE(nn.Module):
         gen = self.generated(seed)
         gen = gen.view(-1, 256, 1, 1)
         return self.decode(gen), mu, logvar
+
+    def generate(self, z):
+        """ z.shape = [batch_size, dimz]
+                with dimz = 100
+        """
+        x = self.generated(z)
+        x = x.view(-1, 256, 1, 1)
+        return self.decode(x)
+
 
 
 def dkl(mu, logvar):
@@ -118,67 +129,126 @@ def elbo(X, out, mu, logvar):
     return BCE + DKL
 
 
-# def pdf(X, mu, logvar):
-#     sigma = logvar.exp()
-#     return
+def probability_density_function(z, mu, logvar):
+    """ Returns the log the probabily density function of z, following a multivariate gaussian
+        z  is a 3D tensor of shape (batch_size, n_imp, dimz) with
+            dimz : the latent variable size
+            n_imp the number of importance samples
+        mu & logvar are two matrices of shape (batch_size, dimz)
+        outpur is a matrix of shape (batch_size, n_imp)
+    """
+    k = mu.shape[1] #k = dimz
+    mu = mu.view(-1, 1, k)
+    logvar = logvar.view(-1, 1, k )
+    log_det_cov = logvar.sum(dim=2) # log(det(Sigma)) with Sigma the covariance matrix
+    inv_sigma = 1./logvar.exp()
+    #each row is the diagonal entries of the inverse of covariance matrix
+    #the inverse of a diagonal matrix is the inverse of the elements
+    log_exp = (inv_sigma * (z- mu)**2 ).sum(dim=2)
+    return (-k/2) * np.log(2*np.pi) - .5 * log_det_cov - .5 * log_exp
+
+def log_likelihood(model, X, Z):
+    """ returns p(x)
+        X.shape = [batch_size, dimx]
+        Z.shape = [batch_size, n_samples, dimz]
+        where :
+            dimx = 784, is the dimension of the inputs
+            n_samples = 200, is the number of importance samples
+            dimz = 100, is the size of the latent space
+    """
+    batch_size = X.shape[0]
+    dimx = X.shape[1]
+    n_samples = Z.shape[1]
+    dimz = Z.shape[2]
+
+    p_xz    = torch.Tensor(batch_size, n_samples)
+    mu, logvar = model.encode(X.view(batch_size, 1, 28, 28))
+
+
+    for i in range(n_samples):
+        out = model.generate(Z[:, i, :])
+
+        #recosntruction error using BCE
+        p_xz[:, i] = - nn.functional.binary_cross_entropy(out.view(-1,784), X.view(-1,784), reduction="none").sum(dim=1)
+    #q(z|x) follows a multivariate normal distribution of mu, sigma^2
+    q_zx    = probability_density_function(Z, mu, logvar)
+
+    #p(z) follows a standard multivariate normal distribution
+    p_z     = probability_density_function(Z, torch.zeros_like(mu), torch.zeros_like(logvar))
+
+    log_p_x = p_xz + p_z - q_zx
+    return log_p_x.logsumexp(dim=1) - np.log(n_samples)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # def loss_function(model, array, other_array):
 # losses = [log (1/K) sum(p1*p2/q) for k in pdf()]
 # return losses
-
-
-if __name__ == "__main__":
-    batch_size = 4
-    EPOCHS = 20
-    train = loadmat("binarized_mnist_train.amat")
-    train_dataset = utils.TensorDataset(train)
-    trainloader = utils.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=2
-    )
-
-    valid = loadmat("binarized_mnist_valid.amat")
-    valid_dataset = utils.TensorDataset(valid)
-    validloader = utils.DataLoader(
-        valid_dataset, batch_size=batch_size, shuffle=True, num_workers=2
-    )
-
-    test = loadmat("binarized_mnist_test.amat")
-    test_dataset = utils.TensorDataset(test)
-    testloader = utils.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=True, num_workers=2
-    )
-
-    model = VAE()
-    optimizer = Adam(model.parameters(), lr=3e-4)
-    for e in range(EPOCHS):
-        ELBOs = []
-        for X in trainloader:
-            optimizer.zero_grad()
-            X = X[0].to(device)
-            out, mu, logvar = model.forward(X)
-            # ELBO = -elbo(X, out, mu, logvar)
-            ELBO = elbo(X, out, mu, logvar)
-            ELBO.backward()
-            optimizer.step()
-            ELBOs.append(float(ELBO))
-
-        vELBOs = []
-        for svalid in validloader:
-            svalid = svalid[0].to(device)
-            vout, vmu, vlogvar = model.forward(svalid)
-            vELBOs.append(float(elbo(svalid, vout, vmu, vlogvar)))
-
-        print(
-            f"Epoch {e}: train_loss: {-np.mean(ELBOs):.5f}, valid_loss: {-np.mean(vELBOs):.5f}"
-        )
-
-    generated = np.array([]).reshape(0, 28, 28)
-    for batch in testloader:
-        out, mu, logvar = model.forward(batch[0].to(device))
-        generated = np.concatenate(
-            (generated, out.view(-1, 28, 28).detach().cpu().numpy()), axis=0
-        )
-
-    plt.matshow(create_grid(generated))
-    plt.show()
+#
+#
+# if __name__ == "__main__":
+#     batch_size = 4
+#     EPOCHS = 20
+#     train = loadmat("binarized_mnist_train.amat")
+#     train_dataset = utils.TensorDataset(train)
+#     trainloader = utils.DataLoader(
+#         train_dataset, batch_size=batch_size, shuffle=True, num_workers=2
+#     )
+#
+#     valid = loadmat("binarized_mnist_valid.amat")
+#     valid_dataset = utils.TensorDataset(valid)
+#     validloader = utils.DataLoader(
+#         valid_dataset, batch_size=batch_size, shuffle=True, num_workers=2
+#     )
+#
+#     test = loadmat("binarized_mnist_test.amat")
+#     test_dataset = utils.TensorDataset(test)
+#     testloader = utils.DataLoader(
+#         test_dataset, batch_size=batch_size, shuffle=True, num_workers=2
+#     )
+#
+#     model = VAE()
+#     optimizer = Adam(model.parameters(), lr=3e-4)
+#     for e in range(EPOCHS):
+#         ELBOs = []
+#         for X in trainloader:
+#             optimizer.zero_grad()
+#             X = X[0].to(device)
+#             out, mu, logvar = model.forward(X)
+#             # ELBO = -elbo(X, out, mu, logvar)
+#             ELBO = elbo(X, out, mu, logvar)
+#             ELBO.backward()
+#             optimizer.step()
+#             ELBOs.append(float(ELBO))
+#
+#         vELBOs = []
+#         for svalid in validloader:
+#             svalid = svalid[0].to(device)
+#             vout, vmu, vlogvar = model.forward(svalid)
+#             vELBOs.append(float(elbo(svalid, vout, vmu, vlogvar)))
+#
+#         print(
+#             f"Epoch {e}: train_loss: {-np.mean(ELBOs):.5f}, valid_loss: {-np.mean(vELBOs):.5f}"
+#         )
+#
+#     generated = np.array([]).reshape(0, 28, 28)
+#     for batch in testloader:
+#         out, mu, logvar = model.forward(batch[0].to(device))
+#         generated = np.concatenate(
+#             (generated, out.view(-1, 28, 28).detach().cpu().numpy()), axis=0
+#         )
+#
+#     plt.matshow(create_grid(generated))
+#     plt.show()
