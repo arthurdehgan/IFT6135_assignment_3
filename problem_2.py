@@ -162,7 +162,7 @@ class VAE(nn.Module):
         logvar: torch.Tensor
             the log of the variance of the learned distribution.
         """
-        out = self.encoder(x).squeeze()
+        out = self.encoder(x.view(-1, 1, 28, 28)).squeeze()
         return self.mu(out), self.logvar(out)
 
     def reparam(self, mu, logvar):
@@ -183,7 +183,7 @@ class VAE(nn.Module):
         """
         if self.training:
             seed = torch.Tensor(np.random.normal(0, 1, self.latent_size)).to(device)
-            return seed.mul((0.5 * logvar).exp()).add(mu)
+            return seed.mul((0.5 * logvar).exp_()).add_(mu)
         else:
             return mu
 
@@ -307,7 +307,7 @@ def probability_density_function(z, mu, logvar):
     # each row is the diagonal entries of the inverse of covariance matrix
     # the inverse of a diagonal matrix is the inverse of the elements
     log_exp = (inv_sigma * (z - mu) ** 2).sum(dim=2)
-    return (-k / 2) * np.log(2 * np.pi) - .5 * log_det_cov - .5 * log_exp
+    return (-latent_size / 2) * np.log(2 * np.pi) - .5 * log_det_cov - .5 * log_exp
 
 
 def log_likelihood(model, X, Z):
@@ -328,12 +328,12 @@ def log_likelihood(model, X, Z):
     Returns
     -------
     log(p(x)): # TODO
-        the log likelihood
+        the negative log likelihood
     """
     batch_size = X.shape[0]
     n_samples = Z.shape[1]
 
-    log_p_xz = torch.Tensor(batch_size, n_samples)
+    log_p_xz = torch.Tensor(batch_size, n_samples).to(device)
     mu, logvar = model.encode(X.view(batch_size, 1, 28, 28))
 
     for i in range(n_samples):
@@ -344,20 +344,20 @@ def log_likelihood(model, X, Z):
             out.view(-1, 784), X.view(-1, 784), reduction="none"
         ).sum(dim=1)
     # q(z|x) follows a multivariate normal distribution of mu, sigma^2
-    log_q_zx = probability_density_function(Z, mu, logvar)
+    log_q_zx = probability_density_function(Z, mu, logvar).to(device)
 
     # p(z) follows a standard multivariate normal distribution
     log_p_z = probability_density_function(
         Z, torch.zeros_like(mu), torch.zeros_like(logvar)
-    )
+    ).to(device)
 
     log_p_x = log_p_xz + log_p_z - log_q_zx
-    return log_p_x.logsumexp(dim=1) - np.log(n_samples)
+    return np.log(n_samples) - log_p_x.logsumexp(dim=1)
 
 
 if __name__ == "__main__":
-    mode = "elb"
-    batch_size = 256
+    mode = "eblo"
+    batch_size = 64
     EPOCHS = 20
     train = loadmat("binarized_mnist_train.amat")
     train_dataset = utils.TensorDataset(train)
@@ -380,42 +380,52 @@ if __name__ == "__main__":
     model = VAE()
     optimizer = Adam(model.parameters(), lr=3e-4)
     for e in range(EPOCHS):
-        losses = []
+        losses, ELBOs = [], []
         model.train()
         for X in trainloader:
             optimizer.zero_grad()
             X = X[0].to(device)
             out, mu, logvar = model.forward(X)
+            ELBO = elbo(X, out, mu, logvar)
+            ELBOs.append(float(ELBO))
+
+            Z = torch.empty(batch_size, 200, 100).to(device)
+            mu, logvar = model.encode(X)
+            for i in range(batch_size):
+                Zi = torch.empty(200, 100).normal_().to(device)
+                Z[i, :, :] = Zi * (.5 * logvar[i]).exp_() + mu[i]
+            loss = log_likelihood(model, X, Z).mean()
+
             if mode == "elbo":
-                loss = elbo(X, out, mu, logvar)
+                ELBO.backward()
             else:
-                Z = torch.empty(batch_size, 200, 100)  # TODO
-                mu, logvar = model.encode(X)
-                for i in range(batch_size):
-                    Zi = torch.empty(200, 100).normal_().to(device)
-                    Z[i, :, :] = Zi * (.5 * logvar[i]).exp_() + mu[i]
-                loss = float(log_likelihood(model, X, Z).mean())
-            loss.backward()
+                loss.backward()
+
+            print(f"nll: {-float(loss):.4f}, ELBO: {-float(ELBO):.4f}", end="\r")
             optimizer.step()
             losses.append(float(loss))
 
-        vlosses = []
+        vlosses, vELBOs = [], []
         model.eval()
         for svalid in validloader:
             svalid = svalid[0].to(device)
-            vout, vmu, vlogvar = model.forward(svalid)
-            if mode == "elbo":
-                vloss = float(elbo(svalid, vout, vmu, vlogvar))
-            else:
-                Z = torch.empty(batch_size, 200, 100)  # TODO
-                mu, logvar = model.encode(X)
-                for i in range(batch_size):
-                    Zi = torch.empty(200, 100).normal_().to(device[i, :, :] = Zi * (.5 * logvar[i]).exp_() + mu[i]
-                vloss = float(log_likelihood(model, X, Z).mean())
-            vlosses.append(vloss)
+            out, mu, logvar = model.forward(svalid)
+            ELBO = float(elbo(svalid, out, mu, logvar))
+            vELBOs.append(ELBO)
+
+            Z = torch.empty(batch_size, 200, 100).to(device)
+            mu, logvar = model.encode(svalid)
+            for i in range(batch_size):
+                Zi = torch.empty(200, 100).normal_().to(device)
+                Z[i, :, :] = Zi * (.5 * logvar[i]).exp_() + mu[i]
+            loss = float(log_likelihood(model, X, Z).mean())
+            vlosses.append(loss)
 
         print(
-            f"Epoch {e}: train_loss: {-np.mean(losses):.5f}, valid_loss: {-np.mean(vlosses):.5f}"
+            f"Epoch {e}: train_nll:    {-np.mean(losses):.5f}, valid_nll:    {-np.mean(vlosses):.5f}"
+        )
+        print(
+            f"           train_elbo:   {-np.mean(ELBOs):.5f}, valid_elbo:   {-np.mean(vELBOs):.5f}"
         )
 
     generated = np.array([]).reshape(0, 28, 28)
