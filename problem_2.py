@@ -109,7 +109,7 @@ class VAE(nn.Module):
         the means of the learned distribution.
     logvar: nn.Linear
         the log of the variance of the learned distribution.
-    generate_layer: nn.Linear
+    sample: nn.Linear
         the linear layer used for the genration of images from the latent space. # TODO
     decoder: nn.Sequential
         the decoder.
@@ -131,7 +131,7 @@ class VAE(nn.Module):
         ).to(device)
         self.mu = nn.Linear(256, latent_size).to(device)
         self.logvar = nn.Linear(256, latent_size).to(device)
-        self.generate_layer = nn.Linear(latent_size, 256).to(device)
+        self.sample = nn.Linear(latent_size, 256).to(device)
         self.decoder = nn.Sequential(
             nn.ELU(),
             nn.Conv2d(256, 64, 5, padding=4),
@@ -223,7 +223,7 @@ class VAE(nn.Module):
         """
         mu, logvar = self.encode(x)
         seed = self.reparam(mu, logvar)
-        gen = self.generate_layer(seed)
+        gen = self.sample(seed)
         gen = gen.view(-1, 256, 1, 1)
         return self.decode(gen), mu, logvar
 
@@ -241,7 +241,7 @@ class VAE(nn.Module):
         torch.Tensor
             A generated tensor of images
         """
-        x = self.generate_layer(z)
+        x = self.sample(z)
         x = x.view(-1, 256, 1, 1)
         return self.decode(x)
 
