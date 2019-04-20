@@ -267,29 +267,6 @@ def dkl(mu, logvar):
     return DKL
 
 
-def bce(out, X):
-    """
-    Computes the binary cross-entropy between 2 tensors
-
-    Parameters
-    ----------
-    out: torch.Tensor
-        the predicted values
-    X: torch.Tensor
-        the original values
-
-    Returns
-    -------
-    BCE:
-        the binary cross-entropy between out and X
-    """
-    BCE = nn.functional.binary_cross_entropy(
-        out.view(-1, 784), X.view(-1, 784), size_average=False
-    )
-    # return -BCE
-    return BCE
-
-
 def elbo(X, out, mu, logvar):
     """
     Copmputes the Evidence Lower BOund.
@@ -373,25 +350,25 @@ def log_likelihood(model, X, Z):
     batch_size = X.shape[0]
     n_samples = Z.shape[1]
 
-    p_xz = torch.Tensor(batch_size, n_samples)
+    log_p_xz = torch.Tensor(batch_size, n_samples)
     mu, logvar = model.encode(X.view(batch_size, 1, 28, 28))
 
     for i in range(n_samples):
         out = model.generate(Z[:, i, :])
 
         # reconstruction error using BCE
-        p_xz[:, i] = -nn.functional.binary_cross_entropy(
+        log_p_xz[:, i] = -nn.functional.binary_cross_entropy(
             out.view(-1, 784), X.view(-1, 784), reduction="none"
         ).sum(dim=1)
     # q(z|x) follows a multivariate normal distribution of mu, sigma^2
-    q_zx = probability_density_function(Z, mu, logvar)
+    log_q_zx = probability_density_function(Z, mu, logvar)
 
     # p(z) follows a standard multivariate normal distribution
-    p_z = probability_density_function(
+    log_p_z = probability_density_function(
         Z, torch.zeros_like(mu), torch.zeros_like(logvar)
     )
 
-    log_p_x = p_xz + p_z - q_zx
+    log_p_x = log_p_xz + log_p_z - log_q_zx
     return log_p_x.logsumexp(dim=1) - np.log(n_samples)
 
 
