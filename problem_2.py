@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import os
 import numpy as np
 import pandas as pd
 import torch
@@ -228,6 +229,63 @@ class VAE(nn.Module):
         gen = self.decode(z)
         return gen, mu, logvar
 
+    def evaluate(self, dataset, batch_size, compute_ll=False):
+        # generated = np.array([]).reshape(0, 28, 28)
+        # generated = np.concatenate((generated, out.view(-1, 28, 28).detach().cpu().numpy()), axis=0)
+        # plt.matshow(create_grid(-generated), cmap=plt.cm.gray_r)
+        # plt.savefig("generated_grid.png")
+        valid_dataset = utils.TensorDataset(valid)
+        validloader = utils.DataLoader(
+            valid_dataset, batch_size=int(batch_size / 2), shuffle=True, num_workers=2
+        )
+        if compute_ll:
+            print("Computing train NLL and ELBO, this might take a while...")
+        losses, ELBOs = [], []
+        model.eval()
+        for batch in validloader:
+            batch = batch[0].to(device)
+            out, mu, logvar = model.forward(batch)
+            ELBOs.append(float(elbo(batch, out, mu, logvar)))
+            if compute_ll:
+                losses.append(float(compute_ll_loss(batch, mu, logvar)))
+
+        if compute_ll:
+            return -np.mean(losses), -np.mean(ELBOs)
+        else:
+            return -np.mean(ELBOs)
+
+    def fit(self, trainset, EPOCHS, batch_size, verbose=False):
+        print("Training...")
+        train_dataset = utils.TensorDataset(trainset)
+        trainloader = utils.DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True, num_workers=2
+        )
+        optimizer = Adam(self.parameters(), lr=3e-4)
+        N = len(trainset)
+        for e in range(EPOCHS):
+            losses, ELBOs = [], []
+            self.train()
+            progress = 0
+            for batch in trainloader:
+                optimizer.zero_grad()
+                batch = batch[0].to(device)
+                out, mu, logvar = self.forward(batch)
+                ELBO = elbo(batch, out, mu, logvar)
+                ELBOs.append(float(ELBO))
+                ELBO.backward()
+                optimizer.step()
+
+                progress += len(batch)
+                if progress % (len(batch) * 30) == 0:
+                    loss = float(compute_ll_loss(batch, mu, logvar))
+                    losses.append(loss)
+                    if verbose:
+                        print(
+                            f"{progress:6d}/{N}  ||  NLL: {-loss:.3f}  ||  ELBO: {-ELBO:.3f}",
+                            end="\r",
+                        )
+        return -np.mean(losses), -np.mean(ELBOs)
+
 
 def dkl(mu, logvar):
     """
@@ -245,6 +303,7 @@ def dkl(mu, logvar):
     DKL:
         the KL divergence
     """
+
     DKL = 0.5 * torch.sum(-1 - logvar + mu.pow(2) + logvar.exp())
     # DKL /= len(mu) * 784
     return DKL
@@ -367,90 +426,26 @@ if __name__ == "__main__":
     compute_valid_ll = False
     batch_size = 128
     EPOCHS = 20
-    train = loadmat("binarized_mnist_train.amat")
-    train_dataset = utils.TensorDataset(train)
-    trainloader = utils.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=2
-    )
+    trainset = loadmat("binarized_mnist_train.amat")
+    model = VAE()
+    if not os.path.exists("trained_VAE.pt"):
+        loss, ELBO = model.fit(trainset, EPOCHS, batch_size)
+    else:
+        model.load_state_dict("trained_VAE.pt")
+        loss, ELBO = model.evaluate(trainset, batch_size, compute_ll=True)
 
     # Smaller batch size for valid and test when we compute log likelihood because we
     # had memory issues
     valid = loadmat("binarized_mnist_valid.amat")
-    valid_dataset = utils.TensorDataset(valid)
-    validloader = utils.DataLoader(
-        valid_dataset, batch_size=int(batch_size / 2), shuffle=True, num_workers=2
-    )
-
+    print("Evaluating the validation set")
+    vloss, vELBO = model.evaluate(valid, batch_size, compute_ll=True)
     test = loadmat("binarized_mnist_test.amat")
-    test_dataset = utils.TensorDataset(test)
-    testloader = utils.DataLoader(
-        test_dataset, batch_size=int(batch_size / 2), shuffle=True, num_workers=2
-    )
+    print("Evaluating the test set")
+    tloss, tELBO = model.evaluate(test, batch_size, compute_ll=True)
 
-    model = VAE()
-    optimizer = Adam(model.parameters(), lr=3e-4)
-    N = len(train)
-    for e in range(EPOCHS):
-        losses, ELBOs = [], []
-        model.train()
-        progress = 0
-        for batch in trainloader:
-            optimizer.zero_grad()
-            batch = batch[0].to(device)
-            out, mu, logvar = model.forward(batch)
-            ELBO = elbo(batch, out, mu, logvar)
-            ELBOs.append(float(ELBO))
-            ELBO.backward()
-            optimizer.step()
+    print(f"      ||    NLL   ||   ELBO")
+    print(f"Train || {loss:.3f} || {ELBO:.3f}")
+    print(f"Valid || {vloss:.3f} || {vELBO:.3f}")
+    print(f"Test  || {tloss:.3f} || {tELBO:.3f}")
 
-            progress += len(batch)
-            if progress % (len(batch) * 30) == 0:
-                loss = float(compute_ll_loss(batch, mu, logvar))
-                losses.append(loss)
-                print(
-                    f"{progress:6d}/{N}  ||  NLL: {-loss:.3f}  ||  ELBO: {-ELBO:.3f}",
-                    end="\r",
-                )
-
-        print("Computing train NLL and ELBO, this might take a while...", end="\r")
-        vlosses, vELBOs = [], []
-        model.eval()
-        for batch in validloader:
-            batch = batch[0].to(device)
-            out, mu, logvar = model.forward(batch)
-            ELBO = float(elbo(batch, out, mu, logvar))
-            vELBOs.append(ELBO)
-            if compute_valid_ll or e == 19:
-                loss = float(compute_ll_loss(batch, mu, logvar))
-            else:
-                loss = 0
-            vlosses.append(loss)
-
-        print(f"Epoch {e:} ||    NLL   ||   ELBO                           ")
-        print(f"Train   || {-np.mean(losses):.3f} || {-np.mean(ELBOs):.3f}")
-        print(f"Valid   || {-np.mean(vlosses):.3f} || {-np.mean(vELBOs):.3f}")
-
-    losses = -np.mean(losses)
-    ELBOs = -np.mean(ELBOs)
-    vlosses = -np.mean(vlosses)
-    vELBOs = -np.mean(vELBOs)
-    tlosses, tELBOs = [], []
-    generated = np.array([]).reshape(0, 28, 28)
-    for batch in testloader:
-        batch = batch[0].to(device)
-        out, mu, logvar = model.forward(batch)
-        # generated = np.concatenate((generated, out.view(-1, 28, 28).detach().cpu().numpy()), axis=0)
-        ELBO = float(elbo(batch, out, mu, logvar))
-        tELBOs.append(ELBO)
-        loss = float(compute_ll_loss(batch, mu, logvar))
-        tlosses.append(loss)
-    tlosses = -np.mean(tlosses)
-    tELBOs = -np.mean(tELBOs)
-    print(f"\n      ||    NLL   ||   ELBO")
-    print(f"Train || {losses:.3f} || {ELBOs:.3f}")
-    print(f"Valid || {vlosses:.3f} || {vELBOs:.3f}")
-    print(f"Test  || {tlosses:.3f} || {tELBOs:.3f}")
-
-    # plt.matshow(create_grid(-generated), cmap=plt.cm.gray_r)
-    # plt.savefig("generated_grid.png")
     torch.save(model.state_dict(), f"trained_VAE.pt")
